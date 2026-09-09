@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>METEOR SHIELD - motion-tracked city defense</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#050510;overflow:hidden;font-family:'JetBrains Mono',monospace}
+  canvas{display:block;width:100vw;height:100vh}
+  #cam{position:fixed;bottom:12px;right:12px;width:160px;height:120px;border:1px solid #445;transform:scaleX(-1);border-radius:6px;opacity:.8;display:none}
+  #st{position:fixed;bottom:16px;left:12px;color:#8f9;font-size:12px}
+  button{background:#0d1a0d;color:#9f9;border:1px solid #393;border-radius:4px;padding:6px 10px;font-family:inherit;font-size:12px;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<video id="cam" autoplay playsinline muted></video>
+<div id="st"><button id="camBtn">use webcam motion tracking</button> <span>or move your mouse / finger</span></div>
+<script>
+const cv=document.getElementById('c'),cx=cv.getContext('2d');
+let W,H;function rs(){W=cv.width=innerWidth;H=cv.height=innerHeight}addEventListener('resize',rs);rs();
+let shieldX=.5,score=0,wave=1,dmg=0,mode='title',frame=0;
+const meteors=[],parts=[],buildings=[];
+function mkCity(){buildings.length=0;let x=0;while(x<W){const w=30+Math.random()*50,h=40+Math.random()*120;buildings.push({x,w,h,hp:3});x+=w+6;}}
+mkCity();
+function spawn(){const n=1+Math.floor(wave/2);for(let i=0;i<n;i++)meteors.push({x:Math.random()*W,y:-30,vx:(Math.random()-.5)*1.4,vy:1.2+wave*.25+Math.random(),r:8+Math.random()*10});}
+// input: mouse/touch
+cv.addEventListener('pointermove',e=>{shieldX=e.clientX/W});
+// webcam motion via frame differencing (no dependencies)
+const vid=document.getElementById('cam'),off=document.createElement('canvas'),ox=off.getContext('2d',{willReadFrequently:true});
+let prev=null,tracking=false;
+document.getElementById('camBtn').onclick=async function(){
+  try{
+    vid.srcObject=await navigator.mediaDevices.getUserMedia({video:{width:160,height:120}});
+    await vid.play();vid.style.display='block';tracking=true;this.style.display='none';
+  }catch(e){this.textContent='no camera - mouse mode';}
+};
+function track(){
+  if(!tracking||vid.readyState<2)return;
+  off.width=80;off.height=60;ox.drawImage(vid,0,0,80,60);
+  const cur=ox.getImageData(0,0,80,60).data;
+  if(prev){
+    let sx=0,sc=0;
+    for(let i=0;i<cur.length;i+=4){
+      const d=Math.abs(cur[i]-prev[i])+Math.abs(cur[i+1]-prev[i+1])+Math.abs(cur[i+2]-prev[i+2]);
+      if(d>60){const x=(i/4)%80;sx+=x;sc++;}
+    }
+    if(sc>12){const cxm=sx/sc/80;shieldX+=(1-cxm-shieldX)*.35;} // mirrored
+  }
+  prev=cur;
+}
+function burst(x,y,c){for(let i=0;i<14;i++)parts.push({x,y,vx:(Math.random()-.5)*5,vy:(Math.random()-.5)*5,l:30+Math.random()*20,c});}
+function step(){
+  frame++;track();
+  if(mode!=='play')return;
+  if(frame%Math.max(20,70-wave*5)===0)spawn();
+  const sx=shieldX*W,sy=H-150;
+  for(let i=meteors.length-1;i>=0;i--){
+    const m=meteors[i];m.x+=m.vx;m.y+=m.vy;
+    // shield arc collision
+    const d=Math.hypot(m.x-sx,m.y-sy);
+    if(d<70&&m.vy>0){
+      const ang=Math.atan2(m.y-sy,m.x-sx);
+      m.vx=Math.cos(ang)*3.2;m.vy=Math.sin(ang)*3.2-.5;
+      m.def=true;burst(m.x,m.y,'#6ff');score+=10*wave;
+    }
+    if(m.y>H-60){
+      // hit a building?
+      const b=buildings.find(b=>m.x>b.x&&m.x<b.x+b.w&&b.hp>0);
+      if(b){b.hp--;burst(m.x,H-60,'#f96');dmg++;
+        if(buildings.every(b=>b.hp<=0)){mode='over';}
+      } else burst(m.x,H-40,'#f96');
+      meteors.splice(i,1);continue;
+    }
+    if(m.y<-40||m.x<-40||m.x>W+40)meteors.splice(i,1);
+  }
+  if(score>=wave*wave*100){wave++;}
+  for(let i=parts.length-1;i>=0;i--){const p=parts[i];p.x+=p.vx;p.y+=p.vy;p.vy+=.08;p.l--;if(p.l<=0)parts.splice(i,1);}
+}
+function draw(){
+  // sky
+  const g=cx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#05051a');g.addColorStop(1,'#1a0a2a');
+  cx.fillStyle=g;cx.fillRect(0,0,W,H);
+  cx.fillStyle='#fff';for(let i=0;i<80;i++){cx.globalAlpha=.4+Math.sin(i*7+frame*.02)*.3;cx.fillRect((i*97)%W,(i*61)%(H*.6),1.5,1.5);}cx.globalAlpha=1;
+  // city
+  for(const b of buildings){
+    if(b.hp<=0){cx.fillStyle='#221';cx.fillRect(b.x,H-30,b.w,30);continue;}
+    cx.fillStyle=['#2a2a44','#33335a','#3a3a66'][b.hp-1]||'#2a2a44';
+    cx.fillRect(b.x,H-b.h,b.w,b.h);
+    cx.fillStyle=b.hp===1?'#f66':'#ffd76b';
+    for(let wy=H-b.h+8;wy<H-10;wy+=16)for(let wx=b.x+6;wx<b.x+b.w-8;wx+=14)
+      if((wx*wy)%7<3)cx.fillRect(wx,wy,6,8);
+  }
+  // meteors
+  for(const m of meteors){
+    cx.fillStyle=m.def?'#8ef':'#fb6';
+    cx.beginPath();cx.arc(m.x,m.y,m.r,0,7);cx.fill();
+    cx.globalAlpha=.4;cx.beginPath();cx.arc(m.x-m.vx*4,m.y-m.vy*4,m.r*.7,0,7);cx.fill();cx.globalAlpha=1;
+  }
+  // particles
+  for(const p of parts){cx.globalAlpha=p.l/40;cx.fillStyle=p.c;cx.fillRect(p.x,p.y,3,3);}cx.globalAlpha=1;
+  // shield
+  const sx=shieldX*W,sy=H-150;
+  cx.strokeStyle='#6ff';cx.lineWidth=5;cx.beginPath();cx.arc(sx,sy,70,Math.PI*1.15,Math.PI*1.85);cx.stroke();
+  cx.strokeStyle='rgba(100,240,255,.3)';cx.lineWidth=12;cx.beginPath();cx.arc(sx,sy,70,Math.PI*1.15,Math.PI*1.85);cx.stroke();
+  // HUD
+  cx.fillStyle='#9ff';cx.font='bold 20px Courier New';
+  cx.fillText('SCORE '+score,18,32);cx.fillText('WAVE '+wave,18,58);
+  cx.fillStyle='#f99';cx.fillText('CITY '+buildings.filter(b=>b.hp>0).length+'/'+buildings.length,18,84);
+  if(mode==='title'){
+    cx.fillStyle='rgba(3,3,12,.8)';cx.fillRect(0,0,W,H);
+    cx.textAlign='center';cx.fillStyle='#9ff';
+    cx.font='bold 46px Courier New';cx.fillText('METEOR SHIELD',W/2,H*.36);
+    cx.font='15px Courier New';cx.fillStyle='#cdf';
+    cx.fillText('your body is the controller - move to slide the shield and swat meteors away',W/2,H*.36+34);
+    cx.fillText('webcam motion tracking, no uploads, all on-device',W/2,H*.36+58);
+    cx.fillStyle='#ff6';cx.font='bold 18px Courier New';cx.fillText('click anywhere to defend',W/2,H*.6);
+    cx.textAlign='left';
+  }
+  if(mode==='over'){
+    cx.fillStyle='rgba(12,3,3,.82)';cx.fillRect(0,0,W,H);
+    cx.textAlign='center';cx.fillStyle='#f88';
+    cx.font='bold 44px Courier New';cx.fillText('CITY LOST',W/2,H*.4);
+    cx.fillStyle='#cdf';cx.font='16px Courier New';
+    cx.fillText('final score '+score+' - wave '+wave,W/2,H*.4+36);
+    cx.fillText('click to rebuild',W/2,H*.4+64);cx.textAlign='left';
+  }
+}
+cv.addEventListener('click',()=>{
+  if(mode==='title'){mode='play';}
+  else if(mode==='over'){mode='play';score=0;wave=1;dmg=0;meteors.length=0;mkCity();}
+});
+(function loop(){step();draw();requestAnimationFrame(loop);})();
+</script>
+</body>
+</html>
