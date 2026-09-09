@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SEQUENCE SCAPE - draw terrain, hear it bounce</title>
+<style>
+  html,body{margin:0;height:100%;background:#07070f;overflow:hidden;font-family:'Courier New',monospace}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  #ui{position:fixed;top:12px;left:12px;color:#9aa0ff;font-size:12px;line-height:1.7;pointer-events:none;text-shadow:0 0 8px #000}
+  #bar{position:fixed;bottom:12px;left:12px;display:flex;gap:8px}
+  button{background:#14142a;color:#aab0ff;border:1px solid #4444aa;border-radius:4px;padding:6px 10px;font-family:inherit;font-size:12px;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">SEQUENCE SCAPE<br>draw hills with your finger / mouse<br>balls bounce off your landscape and play it<br>pitch = where they land &nbsp; size = how hard</div>
+<div id="bar"><button id="add">+ ball</button><button id="clear">redraw terrain</button><button id="grav">gravity: floaty</button></div>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+<script>
+const cv=document.getElementById('c'),cx=cv.getContext('2d');
+let W,H;function rs(){W=cv.width=innerWidth;H=cv.height=innerHeight}addEventListener('resize',rs);rs();
+// terrain: heightfield sampled per x
+let terrain=[];
+function defaultTerrain(){terrain=[];const n=Math.ceil(W/6)+2;
+  for(let i=0;i<n;i++){const x=i/(n-1);terrain.push(H*.72+Math.sin(x*9)*H*.05+Math.sin(x*23+2)*H*.03);}}
+defaultTerrain();
+function groundAt(x){const i=Math.max(0,Math.min(terrain.length-1,x/6));return terrain[Math.round(i)];}
+let drawing=false;
+function drawAt(x,y){const i=Math.round(x/6);
+  for(let k=-3;k<=3;k++){const j=i+k;if(j>=0&&j<terrain.length){
+    const w=1-Math.abs(k)/4;terrain[j]+= (y-terrain[j])*.5*w;}}}
+cv.addEventListener('pointerdown',e=>{drawing=true;drawAt(e.clientX,e.clientY)});
+cv.addEventListener('pointermove',e=>{if(drawing)drawAt(e.clientX,e.clientY)});
+addEventListener('pointerup',()=>drawing=false);
+
+let synth=null,verb=null;
+async function audio(){
+  if(synth)return true;
+  try{await Tone.start();
+    verb=new Tone.Reverb({decay:4,wet:.4}).toDestination();
+    synth=new Tone.PolySynth(Tone.Synth,{oscillator:{type:'triangle'},envelope:{attack:.002,decay:.4,sustain:.05,release:.8}}).connect(verb);
+    return true;
+  }catch(e){return false;}
+}
+const scale=[0,2,4,7,9,12,14,16,19,21,24];
+function noteFor(x,vel){
+  if(!synth)return;
+  const i=Math.max(0,Math.min(scale.length-1,Math.floor(x/W*scale.length)));
+  const f=196*Math.pow(2,scale[i]/12);
+  synth.triggerAttackRelease(f,'16n',undefined,Math.min(1,.25+vel*.09));
+}
+const balls=[],colors=['#ff6b9d','#ffd166','#6bd5ff','#9dff6b','#c69dff','#ff9d6b'];
+function addBall(){
+  if(balls.length>=8)return;
+  balls.push({x:W*.2+Math.random()*W*.6,y:H*.15,vx:(Math.random()-.5)*3,vy:0,r:7+Math.random()*6,c:colors[balls.length%colors.length],trail:[]});
+}
+document.getElementById('add').onclick=async()=>{await audio();addBall();};
+document.getElementById('clear').onclick=()=>defaultTerrain();
+let gMul=.5;
+document.getElementById('grav').onclick=function(){gMul=gMul===.5?1:gMul===1?.2:.5;this.textContent='gravity: '+(gMul===1?'earth':gMul===.5?'floaty':'moon');};
+addBall();addBall();addBall();
+const stars=[];for(let i=0;i<120;i++)stars.push([Math.random(),Math.random()*.6,Math.random()*1.4+.3]);
+function step(){
+  for(const b of balls){
+    b.vy+=.16*gMul*3;
+    b.x+=b.vx;b.y+=b.vy;
+    if(b.x<b.r){b.x=b.r;b.vx*=-.9}
+    if(b.x>W-b.r){b.x=W-b.r;b.vx*=-.9}
+    const g=groundAt(b.x);
+    if(b.y+b.r>g){
+      b.y=g-b.r;
+      if(Math.abs(b.vy)>1.4){noteFor(b.x,Math.abs(b.vy));
+        // slope roll
+        const sl=(groundAt(b.x+6)-groundAt(b.x-6))/12;b.vx+=sl*2;
+      }
+      b.vy*=-.82;b.vx*=.995;
+    }
+    b.trail.push([b.x,b.y]);if(b.trail.length>22)b.trail.shift();
+  }
+}
+function draw(){
+  cx.fillStyle='#07070f';cx.fillRect(0,0,W,H);
+  cx.fillStyle='#fff';for(const s of stars){cx.globalAlpha=.5;cx.fillRect(s[0]*W,s[1]*H,s[2],s[2]);}cx.globalAlpha=1;
+  // terrain
+  cx.beginPath();cx.moveTo(0,H);
+  for(let i=0;i<terrain.length;i++)cx.lineTo(i*6,terrain[i]);
+  cx.lineTo(W,H);cx.closePath();
+  const grd=cx.createLinearGradient(0,H*.5,0,H);
+  grd.addColorStop(0,'#23234d');grd.addColorStop(1,'#0c0c22');
+  cx.fillStyle=grd;cx.fill();
+  cx.strokeStyle='#5f67ff';cx.lineWidth=2;
+  cx.beginPath();for(let i=0;i<terrain.length;i++){const y=terrain[i];i?cx.lineTo(i*6,y):cx.moveTo(0,y);}cx.stroke();
+  // balls
+  for(const b of balls){
+    cx.strokeStyle=b.c;cx.globalAlpha=.35;cx.beginPath();
+    b.trail.forEach((p,i)=>i?cx.lineTo(p[0],p[1]):cx.moveTo(p[0],p[1]));cx.stroke();cx.globalAlpha=1;
+    cx.fillStyle=b.c;cx.beginPath();cx.arc(b.x,b.y,b.r,0,7);cx.fill();
+    cx.fillStyle='rgba(255,255,255,.5)';cx.beginPath();cx.arc(b.x-b.r*.3,b.y-b.r*.3,b.r*.3,0,7);cx.fill();
+  }
+}
+(function loop(){step();draw();requestAnimationFrame(loop);})();
+</script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SIGNAL DECAY - phosphor ascii terminal</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:'Courier New',monospace}
+  canvas{display:block;width:100vw;height:100vh}
+  #bar{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px;background:rgba(0,10,0,.7);align-items:center;color:#6f6;font-size:12px;flex-wrap:wrap}
+  button,label{background:#011401;color:#7f7;border:1px solid #274;border-radius:3px;padding:4px 8px;font-family:inherit;font-size:12px;cursor:pointer}
+  input[type=range]{width:90px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="bar">
+  <b>SIGNAL DECAY</b>
+  <button id="camBtn">webcam</button>
+  <label>upload image<input id="file" type="file" accept="image/*" style="display:none"></label>
+  <button data-pal="green">phosphor</button><button data-pal="amber">amber</button><button data-pal="ice">ice</button>
+  density <input id="dens" type="range" min="4" max="14" value="8">
+  trail <input id="trail" type="range" min="0" max="95" value="82">
+  <span id="st">synthetic signal mode</span>
+</div>
+<script>
+const cv=document.getElementById('c'),cx=cv.getContext('2d');
+let W,H;function rs(){W=cv.width=innerWidth;H=cv.height=innerHeight}addEventListener('resize',rs);rs();
+const glyphs=' .:-=+*#%@';
+const off=document.createElement('canvas'),ox=off.getContext('2d');
+const src=document.createElement('canvas'),sx=src.getContext('2d');
+let video=null,img=null,mode='syn',t=0;
+const pals={green:v=>'rgb(0,'+Math.floor(60+v*195)+',40)',amber:v=>'rgb('+Math.floor(80+v*175)+','+Math.floor(40+v*130)+',0)',ice:v=>'rgb('+Math.floor(v*120)+','+Math.floor(120+v*135)+',255)'};
+let pal=pals.green;
+document.querySelectorAll('[data-pal]').forEach(b=>b.onclick=()=>pal=pals[b.dataset.pal]);
+const st=document.getElementById('st');
+document.getElementById('camBtn').onclick=async()=>{
+  try{
+    video=document.createElement('video');video.muted=true;video.playsInline=true;
+    video.srcObject=await navigator.mediaDevices.getUserMedia({video:{width:320}});await video.play();
+    mode='cam';st.textContent='live webcam signal';
+  }catch(e){st.textContent='no camera - synthetic signal';}
+};
+document.getElementById('file').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  img=new Image();img.onload=()=>{mode='img';st.textContent='still image through the terminal';};
+  img.src=URL.createObjectURL(f);
+};
+function sourceFrame(){
+  const cols=Math.floor(W/(+document.getElementById('dens').value));
+  const rows=Math.floor(cols*(H/W)*.55);
+  src.width=cols;src.height=rows;
+  if(mode==='cam'&&video&&video.readyState>=2){sx.drawImage(video,0,0,cols,rows);}
+  else if(mode==='img'&&img){sx.drawImage(img,0,0,cols,rows);}
+  else{
+    // synthetic drifting plasma
+    const id=sx.createImageData(cols,rows),d=id.data;
+    for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+      const v=(Math.sin(x*.3+t*.04)+Math.sin(y*.35-t*.03)+Math.sin((x+y)*.18+t*.05)+Math.sin(Math.hypot(x-cols/2,y-rows/2)*.3-t*.06))/4;
+      const g=Math.floor((v*.5+.5)*255);
+      const i=(y*cols+x)*4;d[i]=g*.3;d[i+1]=g;d[i+2]=g*.5;d[i+3]=255;
+    }
+    sx.putImageData(id,0,0);
+  }
+  return sx.getImageData(0,0,cols,rows);
+}
+function draw(){
+  t++;
+  const data=sourceFrame(),cols=data.width,rows=data.height;
+  const cw=W/cols,ch=H/rows;
+  const fade=1-(+document.getElementById('trail').value)/100;
+  cx.fillStyle='rgba(0,0,0,'+fade+')';cx.fillRect(0,0,W,H);
+  cx.font=Math.floor(ch*1.15)+'px Courier New';cx.textBaseline='top';
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+    const i=(y*cols+x)*4;
+    const v=(data.data[i]*.3+data.data[i+1]*.6+data.data[i+2]*.1)/255;
+    const gi=Math.min(glyphs.length-1,Math.floor(v*glyphs.length));
+    if(gi===0)continue;
+    cx.fillStyle=pal(v);
+    // occasional character corruption
+    const g=Math.random()<.004?glyphs[Math.floor(Math.random()*glyphs.length)]:glyphs[gi];
+    cx.fillText(g,x*cw,y*ch);
+  }
+  // scanlines
+  cx.fillStyle='rgba(0,0,0,.18)';
+  for(let y=0;y<H;y+=3)cx.fillRect(0,y,W,1);
+}
+(function loop(){draw();requestAnimationFrame(loop);})();
+</script>
+</body>
+</html>
